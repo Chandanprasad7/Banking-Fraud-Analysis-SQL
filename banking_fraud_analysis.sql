@@ -457,24 +457,21 @@ SELECT
     ROUND(true_positives * 100.0 / NULLIF(total_actual_fraud, 0), 2) AS recall_rate_percentage
 FROM metrics;
 
--- Query 32: Match same-step TRANSFER and CASH_OUT records by account and amount
--- This identifies candidate pass-through patterns; same-step data does not prove event order.
+-- Query 32: Explore same-step, same-amount TRANSFER and CASH_OUT co-occurrences
+-- These are aggregate coincidences only; no account-level link was found in this sample.
 SELECT
-    t.step,
-    t.amount,
-    t.nameOrig AS transfer_sender,
-    t.nameDest AS transfer_receiver,
-    c.nameOrig AS cash_out_sender,
-    t.isFraud AS transfer_is_fraud,
-    c.isFraud AS cash_out_is_fraud
-FROM transactions AS t
-INNER JOIN transactions AS c
-    ON c.nameOrig = t.nameDest
-   AND c.step = t.step
-   AND c.amount = t.amount
-   AND c.type = 'CASH_OUT'
-WHERE t.type = 'TRANSFER'
-ORDER BY t.step, t.amount DESC;
+    step,
+    amount,
+    COUNT(*) AS total_matching_transactions,
+    SUM(CASE WHEN type = 'TRANSFER' THEN 1 ELSE 0 END) AS transfer_count,
+    SUM(CASE WHEN type = 'CASH_OUT' THEN 1 ELSE 0 END) AS cash_out_count,
+    SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) AS fraud_count
+FROM transactions
+WHERE type IN ('TRANSFER', 'CASH_OUT')
+GROUP BY step, amount
+HAVING SUM(CASE WHEN type = 'TRANSFER' THEN 1 ELSE 0 END) > 0
+   AND SUM(CASE WHEN type = 'CASH_OUT' THEN 1 ELSE 0 END) > 0
+ORDER BY fraud_count DESC, amount DESC;
 
 -- Query 33: Show the top 5 fraud-amount ranks within each transaction type (including ties)
 WITH ranked_fraud AS (
