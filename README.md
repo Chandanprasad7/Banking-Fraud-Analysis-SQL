@@ -5,7 +5,7 @@
 ## 1. Project Overview
 This project analyzes financial transaction records using **MySQL 8.0 (MySQL Workbench)** to identify fraudulent behavior, evaluate transaction risk across payment channels, investigate sender and receiver balance anomalies, and test a rule-based fraud detection filter.
 
-The goal of this analysis is to move beyond basic transaction totals and uncover actionable fraud patterns—such as complete account balance draining, zero-balance destination accounts, and paired pass-through laundering transactions—that financial institutions and risk analysts can use to strengthen fraud monitoring.
+The goal of this analysis is to move beyond basic transaction totals and uncover actionable fraud patterns—such as complete account balance draining, zero-balance destination accounts, and exploratory transaction co-occurrences that can help guide further fraud-monitoring analysis.
 
 ---
 
@@ -100,7 +100,7 @@ Fraud occurs **exclusively** in `TRANSFER` and `CASH_OUT` transactions. Zero fra
 * **Query 31 — Rule-Based Filter Precision & Recall:**
   ![Query 31 Precision Recall](Rule-based%20filter%20catching%2062.93%25%20of%20all%20fraud.png)
 * **Query 32 — Same-Hour, Same-Amount Co-occurrences:**
-  ![Query 32 Same-Hour, Same-Amount Co-occurrences](1-to-1%20paired%20TRANSFER%20and%20CASH_OUT%20transactions.png)
+  ![Query 32 Same-Hour, Same-Amount Co-occurrences](Same_Step_Same_Amount_Cooccurrences.png)
 * **Query 34 — Executive Fraud Risk Summary View:**
   ![Query 34 Summary View](Executive%20summary%20view%20output.png)
 
