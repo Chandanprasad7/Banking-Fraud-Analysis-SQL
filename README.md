@@ -40,7 +40,7 @@ Across **35 structured SQL queries**, this project demonstrates:
 * **Aggregations & KPIs:** `SUM()`, `AVG()`, `MIN()`, `MAX()`, and `ROUND()` across transaction types and fraud statuses.
 * **Conditional Logic & Risk Segmentation:** Multi-tier transaction amount and account balance bucketing using `CASE WHEN`.
 * **Common Table Expressions (CTEs) & Window Functions:** Partitioned rankings using `WITH` clauses, `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)`, and `DENSE_RANK()`.
-* **Anomaly & Pattern Detection:** Multi-condition filtering for account draining, overdraft checks, shadow/mule receiver accounts, and paired pass-through transactions.
+* **Anomaly & Pattern Detection:** Multi-condition filtering for balance depletion, amount-versus-balance discrepancies, zero-balance receiver patterns, and same-account transfer-to-cash-out matches.
 * **Rule Evaluation Metrics:** Calculating True Positives, False Positives, Precision, and Recall directly in SQL.
 * **Database Views & Query Optimization:** Creating reusable reporting views (`CREATE OR REPLACE VIEW v_fraud_risk_summary`) and inspecting query execution plans using `EXPLAIN`.
 
@@ -80,8 +80,8 @@ Fraud occurs **exclusively** in `TRANSFER` and `CASH_OUT` transactions. Zero fra
    * **56 out of 57 fraudulent transfers (98.25%)** and **20 fraudulent cash-outs** were sent to receiver accounts that had an initial balance of `0` (`oldbalanceDest = 0`). The fraud rate for `TRANSFER` to zero-balance accounts jumped to **5.33%** (8x higher than the overall `TRANSFER` fraud rate of 0.66%).
 4. **Unreflected Receiver Balances — Major Red Flag (Query 29):**
    * In `TRANSFER` transactions where the receiver started with `0` balance and still showed `0` balance after receiving funds (`oldbalanceDest = 0 AND newbalanceDest = 0 AND amount > 0`), **48 out of 72 transactions were fraudulent—a 66.67% fraud rate** totaling `35,059,151.38`.
-5. **1-to-1 Paired Pass-Through Laundering (Query 32):**
-   * High-value fraud frequently occurs in exact pairs within the same simulated hour (`step`): one `TRANSFER` immediately followed by one `CASH_OUT` for the exact same amount (e.g., `10,000,000.00` in step 4; `5,460,002.91` in step 7; `2,930,418.44` in step 4).
+5. **Candidate Transfer-to-Cash-Out Matches (Query 32):**
+   * Query 32 joins a `TRANSFER` to a `CASH_OUT` when the transfer recipient is the cash-out sender and both records have the same simulated hour (`step`) and amount. These are candidate pass-through patterns; the dataset's hourly granularity does not establish the exact event order or prove laundering.
 6. **Rule-Based Filter Evaluation (Query 31):**
    * A simple 4-condition rule (`type IN ('TRANSFER', 'CASH_OUT') AND oldbalanceOrg > 0 AND newbalanceOrig = 0 AND oldbalanceDest = 0`) flagged 3,561 transactions and successfully captured **73 of the 116 fraud cases (62.93% Recall)** with a **2.05% Precision**, far outperforming the dataset's built-in `isFlaggedFraud` column (which caught 0 cases).
 7. **Query Performance Optimization (Query 35):**
@@ -100,17 +100,17 @@ Fraud occurs **exclusively** in `TRANSFER` and `CASH_OUT` transactions. Zero fra
 * **Query 31 — Rule-Based Filter Precision & Recall:**
   ![Query 31 Precision Recall](Rule-based%20filter%20catching%2062.93%25%20of%20all%20fraud.png)
 * **Query 32 — Paired Pass-Through Transactions:**
-  ![Query 32 Paired Pass-Through](1-to-1%20paired%20TRANSFER%20and%20CASH_OUT%20transactions.png)
+  ![Query 32 Candidate Transfer-to-Cash-Out Matches](1-to-1%20paired%20TRANSFER%20and%20CASH_OUT%20transactions.png)
 * **Query 34 — Executive Fraud Risk Summary View:**
   ![Query 34 Summary View](Executive%20summary%20view%20output.png)
 
 ---
 
 ## 6. Business Recommendations
-1. **Replace Static Threshold Flags with Behavioral Rules:** The legacy `isFlaggedFraud` rule detected `0%` of frauds in this sample. Risk systems should trigger real-time verification whenever a `TRANSFER` or `CASH_OUT` drains 100% of an account's balance (`newbalanceOrig = 0`).
-2. **Hold or Step-Up Authenticate Zero-Balance Destination Transfers:** Since `66.67%` of transfers where `oldbalanceDest = 0` and `newbalanceDest = 0` are fraudulent, transactions matching this pattern should require multi-factor authentication or a temporary cooling hold before settlement.
-3. **Block Rapid Same-Amount `TRANSFER` -> `CASH_OUT` Chains:** Implement velocity checks within the same hour (`step`) that flag or freeze `CASH_OUT` requests matching the exact amount of a recent incoming `TRANSFER`.
-4. **Database Indexing for Real-Time Monitoring:** Add a composite index `CREATE INDEX idx_type_isfraud ON transactions(type, isFraud);` to eliminate full-table scans (`99,401` rows) on analytical and monitoring queries.
+1. **Investigate Behavioral Signals Alongside Existing Controls:** The legacy `isFlaggedFraud` flag detected `0%` of frauds in this sample. Balance-depletion and transaction-channel patterns can be evaluated as additional signals, with thresholds validated on broader data before operational use.
+2. **Review Unreflected Destination-Balance Patterns:** The observed `66.67%` fraud rate applies to a small, specific subset of this synthetic sample; investigate this pattern rather than automatically blocking transactions.
+3. **Investigate Matched Transfer/Cash-Out Records:** Consider account-linked, time-aware monitoring for matching transfers and cash-outs. The current hourly sample cannot establish exact ordering, so it should not be used alone to block transactions.
+4. **Test Indexing Before Deployment:** The `EXPLAIN` output shows a full-table scan for the tested query. Benchmark a candidate composite index such as `(type, isFraud)` on the actual workload before deciding whether to add it.
 
 ---
 
