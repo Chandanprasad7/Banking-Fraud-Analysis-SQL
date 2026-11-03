@@ -428,53 +428,74 @@ WHERE type IN ('TRANSFER', 'CASH_OUT')
 ORDER BY amount DESC;
 
 -- Query 31: Performance evaluation of the rule-based filter against actual fraud labels
+WITH rule_flags AS (
+    SELECT
+        isFraud,
+        CASE
+            WHEN type IN ('TRANSFER', 'CASH_OUT')
+             AND oldbalanceOrg > 0
+             AND newbalanceOrig = 0
+             AND oldbalanceDest = 0
+            THEN 1
+            ELSE 0
+        END AS rule_flag
+    FROM transactions
+),
+metrics AS (
+    SELECT
+        SUM(rule_flag) AS flagged_transactions,
+        SUM(CASE WHEN rule_flag = 1 AND isFraud = 1 THEN 1 ELSE 0 END) AS true_positives,
+        SUM(CASE WHEN rule_flag = 1 AND isFraud = 0 THEN 1 ELSE 0 END) AS false_positives,
+        SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) AS total_actual_fraud
+    FROM rule_flags
+)
 SELECT
-    COUNT(*) AS flagged_transactions,
-    SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) AS true_positives,
-    SUM(CASE WHEN isFraud = 0 THEN 1 ELSE 0 END) AS false_positives,
-    ROUND(
-        SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*),
-        2
-    ) AS precision_rate_percentage,
-    ROUND(
-        SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) * 100.0 / 116,
-        2
-    ) AS recall_rate_percentage
-FROM transactions
-WHERE type IN ('TRANSFER', 'CASH_OUT')
-  AND oldbalanceOrg > 0
-  AND newbalanceOrig = 0
-  AND oldbalanceDest = 0;
+    flagged_transactions,
+    true_positives,
+    false_positives,
+    ROUND(true_positives * 100.0 / NULLIF(flagged_transactions, 0), 2) AS precision_rate_percentage,
+    ROUND(true_positives * 100.0 / NULLIF(total_actual_fraud, 0), 2) AS recall_rate_percentage
+FROM metrics;
 
--- Query 32: Detect paired pass-through transactions (Same step and identical amount across TRANSFER and CASH_OUT)
+-- Query 32: Match same-step TRANSFER and CASH_OUT records by account and amount
+-- This identifies candidate pass-through patterns; same-step data does not prove event order.
 SELECT
-    step,
-    amount,
-    COUNT(*) AS total_matching_transactions,
-    SUM(CASE WHEN type = 'TRANSFER' THEN 1 ELSE 0 END) AS transfer_count,
-    SUM(CASE WHEN type = 'CASH_OUT' THEN 1 ELSE 0 END) AS cash_out_count,
-    SUM(CASE WHEN isFraud = 1 THEN 1 ELSE 0 END) AS fraud_count
-FROM transactions
-WHERE type IN ('TRANSFER', 'CASH_OUT')
-GROUP BY step, amount
-HAVING transfer_count > 0
-   AND cash_out_count > 0
-ORDER BY fraud_count DESC, amount DESC;
+    t.step,
+    t.amount,
+    t.nameOrig AS transfer_sender,
+    t.nameDest AS transfer_receiver,
+    c.nameOrig AS cash_out_sender,
+    t.isFraud AS transfer_is_fraud,
+    c.isFraud AS cash_out_is_fraud
+FROM transactions AS t
+INNER JOIN transactions AS c
+    ON c.nameOrig = t.nameDest
+   AND c.step = t.step
+   AND c.amount = t.amount
+   AND c.type = 'CASH_OUT'
+WHERE t.type = 'TRANSFER'
+ORDER BY t.step, t.amount DESC;
 
--- Query 33: Rank fraudulent transactions within each transaction type using DENSE_RANK()
-SELECT
-    type,
-    amount,
-    nameOrig,
-    nameDest,
-    oldbalanceOrg,
-    newbalanceOrig,
-    DENSE_RANK() OVER (
-        PARTITION BY type
-        ORDER BY amount DESC
-    ) AS fraud_amount_rank
-FROM transactions
-WHERE isFraud = 1;
+-- Query 33: Show the top 5 fraud-amount ranks within each transaction type (including ties)
+WITH ranked_fraud AS (
+    SELECT
+        type,
+        amount,
+        nameOrig,
+        nameDest,
+        oldbalanceOrg,
+        newbalanceOrig,
+        DENSE_RANK() OVER (
+            PARTITION BY type
+            ORDER BY amount DESC
+        ) AS fraud_amount_rank
+    FROM transactions
+    WHERE isFraud = 1
+)
+SELECT *
+FROM ranked_fraud
+WHERE fraud_amount_rank <= 5
+ORDER BY type, fraud_amount_rank, amount DESC;
 
 -- Query 34: Create a reusable reporting view summarizing key metrics by transaction type
 CREATE OR REPLACE VIEW v_fraud_risk_summary AS
